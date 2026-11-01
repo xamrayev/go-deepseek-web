@@ -1,0 +1,10 @@
+bin/
+accounts/*.json
+deepseek-auth.json
+auth.json
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example

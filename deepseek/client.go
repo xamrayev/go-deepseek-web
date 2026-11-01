@@ -23,6 +23,7 @@ type Client struct {
 	parentMsgID *int64
 	pool        *AccountPool
 	currentAcc  *Account
+	keepSession bool
 	mu          sync.Mutex
 }
 
@@ -34,6 +35,13 @@ type ClientOptions struct {
 	BaseURL  string
 	Pool     *AccountPool
 	Account  *Account
+
+	// KeepSession stops the client from replacing a chat session behind the
+	// caller's back. By default a completion rejected with 400/404/500 is
+	// retried once on a fresh session, which silently drops the conversation's
+	// context; with KeepSession the rejection is returned as a *StatusError so
+	// the caller can decide how to recover.
+	KeepSession bool
 }
 
 // NewClient creates a new DeepSeek Web client.
@@ -51,9 +59,10 @@ func NewClient(opts ClientOptions) *Client {
 	auth := NewAuthManager(opts.Token, opts.AuthPath)
 
 	return &Client{
-		auth:       auth,
-		pool:       opts.Pool,
-		currentAcc: opts.Account,
+		auth:        auth,
+		pool:        opts.Pool,
+		currentAcc:  opts.Account,
+		keepSession: opts.KeepSession,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -105,6 +114,33 @@ func (c *Client) GetSessionID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sessionID
+}
+
+// Conversation returns the chat session and the ID of the last message in it,
+// the pair a later client needs to continue this conversation. parent is nil
+// before the first reply.
+func (c *Client) Conversation() (sessionID string, parent *int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.parentMsgID != nil {
+		id := *c.parentMsgID
+		parent = &id
+	}
+	return c.sessionID, parent
+}
+
+// SetConversation resumes a conversation saved from Conversation, so the next
+// message is threaded after parent instead of starting a new branch. Unlike
+// SetSessionID it keeps the parent message, which is what carries the context.
+func (c *Client) SetConversation(sessionID string, parent *int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionID = sessionID
+	c.parentMsgID = nil
+	if parent != nil {
+		id := *parent
+		c.parentMsgID = &id
+	}
 }
 
 // ResetSession clears the active session to start a fresh chat chain.
@@ -203,7 +239,7 @@ func (c *Client) createSessionInternal(ctx context.Context, isRetry bool) (strin
 				return c.createSessionInternal(ctx, true)
 			}
 		}
-		return "", fmt.Errorf("chat_session/create xatoligi (HTTP %d): %s", resp.StatusCode, string(bodyBytes[:min(len(bodyBytes), 200)]))
+		return "", newStatusError("chat_session/create", resp.StatusCode, bodyBytes, 200)
 	}
 
 	var res struct {
@@ -283,7 +319,7 @@ func (c *Client) RequestAndSolvePoW(ctx context.Context, targetPath string) (str
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("create_pow_challenge HTTP xatosi (%d): %s", resp.StatusCode, string(bodyBytes[:min(len(bodyBytes), 200)]))
+		return "", newStatusError("chat/create_pow_challenge", resp.StatusCode, bodyBytes, 200)
 	}
 
 	var res struct {
@@ -461,7 +497,7 @@ func (c *Client) executeChatStream(ctx context.Context, req ChatStreamRequest, c
 
 	// If session expired (400, 404, 500) and not retry, create fresh session and retry
 	if resp.StatusCode == 400 || resp.StatusCode == 404 || resp.StatusCode == 500 {
-		if !isRetry {
+		if !isRetry && !c.keepSession {
 			c.ResetSession()
 			req.SessionID = ""
 			return c.executeChatStream(ctx, req, chunkCh, true)
@@ -470,7 +506,7 @@ func (c *Client) executeChatStream(ctx context.Context, req ChatStreamRequest, c
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("DeepSeek xatoligi (HTTP %d): %s", resp.StatusCode, string(body[:min(len(body), 300)]))
+		return newStatusError("chat/completion", resp.StatusCode, body, 300)
 	}
 
 	// Read SSE lines

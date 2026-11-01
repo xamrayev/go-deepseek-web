@@ -92,6 +92,33 @@ for {
 }
 ```
 
+### Continuing a conversation
+
+DeepSeek threads a conversation through two values: the chat session, and the ID of the last message in it. Both live on the `Client`, so a conversation outlives the process only if you save them:
+
+```go
+sessionID, parent := client.Conversation() // after a reply
+// ...persist them, then in a later process:
+client.SetConversation(sessionID, parent)
+```
+
+`SetSessionID` is not a substitute — it clears the parent, so the next message starts a new branch of the session and the model loses what came before.
+
+Keep one `Client` per conversation. The parent message is per-client state, so two conversations interleaved on one client will thread each other's messages.
+
+By default, a completion rejected with 400/404/500 is retried once on a fresh session, which drops the context without telling you. Set `ClientOptions.KeepSession` to get the rejection back instead, and branch on its status:
+
+```go
+switch deepseek.StatusCode(err) {
+case 429:
+	// rate limited: try later, or another account
+case 404:
+	// the session is gone: start a new one, replaying your own transcript
+}
+```
+
+Every non-200 reply is a `*deepseek.StatusError`, carrying the endpoint, status and the start of the body.
+
 ### Authentication
 
 `AuthManager` reads a token and cookie from, in order: an explicit path, `$DEEPSEEK_TOKEN` / `$DEEPSEEK_COOKIE`, then a list of candidate files — `./deepseek-auth.json`, `./auth.json`, `~/.deepseek-web/auth.json` and a couple of legacy locations. To add your own application's config directory without forking:

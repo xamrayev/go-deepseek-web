@@ -29,6 +29,11 @@ type ServerOptions struct {
 	// startup log lines. Defaults to DefaultServiceName.
 	ServiceName string
 
+	// Stateless runs every request in a fresh upstream chat instead of
+	// continuing one chat per agent. Clients can override it per request with
+	// the x-session-mode header.
+	Stateless bool
+
 	// OnListen, when set, is called once the listener is bound instead of the
 	// default English log lines, so an embedding application prints its own.
 	OnListen func(info ListenInfo)
@@ -56,6 +61,7 @@ type Server struct {
 	maxConcurrent int
 	client        *deepseek.Client
 	sessionMgr    *SessionManager
+	stateless     bool
 	pool          *deepseek.AccountPool
 	serviceName   string
 	onListen      func(info ListenInfo)
@@ -97,6 +103,7 @@ func NewServer(opts ServerOptions) *Server {
 		maxConcurrent: opts.MaxConcurrent,
 		client:        opts.Client,
 		sessionMgr:    NewSessionManager(30 * time.Minute),
+		stateless:     opts.Stateless,
 		pool:          pool,
 		serviceName:   opts.ServiceName,
 		onListen:      opts.OnListen,
@@ -183,7 +190,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-agent-session, x-api-key, anthropic-version")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-agent-session, x-session-mode, x-api-key, anthropic-version")
 		w.Header().Set("Access-Control-Expose-Headers", "*")
 
 		if r.Method == http.MethodOptions {

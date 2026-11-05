@@ -189,7 +189,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	session := s.sessionMgr.GetOrCreate(agentID)
+	session := s.sessionFor(r, agentID)
 	modelCfg := deepseek.ResolveModelConfig(req.Model)
 
 	if req.Stream {

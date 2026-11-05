@@ -309,7 +309,7 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentID := "ollama-client"
-	session := s.sessionMgr.GetOrCreate(agentID)
+	session := s.sessionFor(r, agentID)
 
 	startTime := time.Now()
 
@@ -515,7 +515,7 @@ func (s *Server) handleOllamaGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentID := "ollama-generate"
-	session := s.sessionMgr.GetOrCreate(agentID)
+	session := s.sessionFor(r, agentID)
 	startTime := time.Now()
 
 	if stream {

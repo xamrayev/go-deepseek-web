@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,37 @@ func NewSessionManager(ttl time.Duration) *SessionManager {
 
 	go sm.startCleaner()
 	return sm
+}
+
+// SessionModeHeader lets a client choose the session mode per request:
+// "stateless" runs the request in a fresh upstream chat and keeps nothing,
+// "session" continues the agent's chat. Without it ServerOptions.Stateless decides.
+//
+// Clients that resend the whole conversation on every call (the OpenAI and
+// Anthropic APIs are stateless by design) want "stateless": in a continued
+// chat the model would see every earlier request again and mix them up.
+const SessionModeHeader = "x-session-mode"
+
+// statelessRequest reports whether r should run without a stored session.
+func (s *Server) statelessRequest(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get(SessionModeHeader))) {
+	case "stateless":
+		return true
+	case "session":
+		return false
+	}
+	return s.stateless
+}
+
+// sessionFor returns the session r should continue. A stateless request gets a
+// throwaway session that is never stored, so the upstream chat sees only the
+// messages of that one request.
+func (s *Server) sessionFor(r *http.Request, agentID string) *deepseek.AgentSession {
+	if s.statelessRequest(r) {
+		now := time.Now()
+		return &deepseek.AgentSession{CreatedAt: now, LastActivityAt: now}
+	}
+	return s.sessionMgr.GetOrCreate(agentID)
 }
 
 // GetOrCreate returns an existing session or creates a new one for agentID.

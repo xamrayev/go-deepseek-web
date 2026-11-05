@@ -61,6 +61,20 @@ curl http://localhost:9655/v1/chat/completions \
 
 Streaming works on all three chat formats. Model names are resolved loosely, so `claude-sonnet-4`, `gpt-4o` and `o3` all map onto a DeepSeek model rather than erroring — which is what lets existing clients connect unchanged.
 
+### Sessions and stateless mode
+
+By default the proxy keeps one upstream DeepSeek chat per agent (`x-agent-session` header, else the caller's address) and continues it on every request. That suits clients that send only the new message, but OpenAI, Anthropic and Ollama clients resend the whole conversation each turn: in a continued chat the model then sees every earlier request again and can mistake old turns for things it already did.
+
+Send `x-session-mode: stateless` to run a request in a fresh upstream chat that sees only that request's messages; nothing is stored on the proxy. `ServerOptions.Stateless` makes that the default, and `x-session-mode: session` opts a single request back into the agent's chat.
+
+```bash
+curl http://localhost:9655/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'x-session-mode: stateless' \
+  -d '{"model":"deepseek-chat","messages":[...]}'
+```
+
+Each stateless request still creates a chat in the DeepSeek account's web history.
+
 ### Tool calling is emulated
 
 The web interface has no function-calling API. The proxy serializes the client's tool definitions into the system prompt, asks the model to answer in DeepSeek's DSML markup (or a JSON fallback), and parses the reply back into `tool_use` / `tool_calls` blocks.

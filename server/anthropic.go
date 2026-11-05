@@ -49,7 +49,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	session := s.sessionMgr.GetOrCreate(agentID)
+	session := s.sessionFor(r, agentID)
 
 	modelToUse := req.Model
 	if session.ModelOverride != "" {
